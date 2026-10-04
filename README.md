@@ -4,6 +4,8 @@
 
 The original font was imported and has been manually edited using [FontForge](https://fontforge.org). All modified source files are available in the `src` directory.
 
+The stripped-down WOFF2 web version keeps common Latin characters, accents, punctuation, and typographic features while removing extended character coverage and specialized symbols. This reduces file sizes by roughly half; desktop and e-reader versions retain their full coverage.
+
 ## Specimen
 
 <img src="./specimen.svg" width=400px>
