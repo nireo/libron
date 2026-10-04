@@ -17,7 +17,7 @@ Pipeline:
   5. Export TTFs to ./out/ttf/
   6. Post-process TTFs (style flags, version names, autohinting)
   7. Run kobo-font-fix to generate Kobo (KF) variants in ./out/kf/
-  8. Generate WOFF2 webfonts in ./out/web/
+  8. Subset common Latin text and generate WOFF2 webfonts in ./out/web/
 
 No glyph scaling, condensing, ligature edits, or other outline transforms
 are applied — the masters are already final. This is a straight export.
@@ -93,6 +93,34 @@ KOBOFIX_URL = "https://raw.githubusercontent.com/nicoverbruggen/kobo-font-fix/v0
 AUTOHINT_OPTS = [
     "--stem-width-mode=nss",
 ]
+
+# Web coverage for English, Finnish, and other Western European text. Keep
+# accents in both precomposed and decomposed forms, punctuation, and common
+# symbols. OpenType layout closure also retains ligatures and small caps.
+# The desktop and Kobo fonts always retain the full source character set.
+WEB_UNICODE_RANGES = (
+    (0x0020, 0x007E),  # Printable ASCII.
+    (0x00A0, 0x00FF),  # Latin-1, including Å/Ä/Ö and common currency signs.
+    (0x0131, 0x0131),  # Dotless i.
+    (0x0152, 0x0153),  # Œ/œ.
+    (0x0160, 0x0161),  # Š/š (Finnish loanwords).
+    (0x0178, 0x0178),  # Ÿ.
+    (0x017D, 0x017E),  # Ž/ž (Finnish loanwords).
+    (0x02C6, 0x02C6),  # Modifier circumflex.
+    (0x02DA, 0x02DA),  # Ring above.
+    (0x02DC, 0x02DC),  # Small tilde.
+    (0x0300, 0x036F),  # Combining accents.
+    (0x2000, 0x206F),  # General punctuation, spaces, and formatting controls.
+    (0x20AC, 0x20AC),  # Euro.
+    (0x2122, 0x2122),  # Trademark.
+    (0x2212, 0x2212),  # Minus.
+    (0x2215, 0x2215),  # Division slash.
+    (0x2219, 0x2219),  # Bullet operator.
+    (0x2248, 0x2248),  # Approximately equal.
+    (0x2260, 0x2260),  # Not equal.
+    (0x2264, 0x2265),  # Less/greater than or equal.
+    (0xFB00, 0xFB06),  # Encoded Latin ligatures.
+)
 
 FONTFORGE_CMD: Optional[list] = None
 
@@ -558,9 +586,10 @@ def run_kobofix(kobofix_path, variant_names):
     print(f"  Moved {moved} KF font(s) to {OUT_KF_DIR}/")
 
 
-def convert_to_woff2(ttf_path, woff2_path):
-    """Convert a TTF to WOFF2 using fontTools (requires `brotli`)."""
+def convert_to_woff2(ttf_path, woff2_path, subset_web=True):
+    """Export a Latin-subset WOFF2, or full coverage when requested."""
     try:
+        from fontTools import subset
         from fontTools.ttLib import TTFont
     except Exception:
         print("  [warn] Skipping WOFF2: fontTools not available", file=sys.stderr)
@@ -576,9 +605,31 @@ def convert_to_woff2(ttf_path, woff2_path):
         return
 
     font = TTFont(ttf_path)
-    font.flavor = "woff2"
-    font.save(woff2_path)
-    font.close()
+    try:
+        if subset_web:
+            original_count = len(font.getGlyphOrder())
+            options = subset.Options()
+            # Keep typographic features and hinting for small body text.
+            options.layout_features = ["*"]
+            options.hinting = True
+            # Preserve license information and preferred family/style names.
+            options.name_IDs += [13, 14, 16, 17]
+            options.notdef_outline = True
+            subsetter = subset.Subsetter(options=options)
+            subsetter.populate(unicodes={
+                codepoint
+                for start, end in WEB_UNICODE_RANGES
+                for codepoint in range(start, end + 1)
+            })
+            subsetter.subset(font)
+            print(
+                f"  Web subset: {original_count} -> "
+                f"{len(font.getGlyphOrder())} glyphs"
+            )
+        font.flavor = "woff2"
+        font.save(woff2_path)
+    finally:
+        font.close()
     print(f"  {os.path.basename(ttf_path)} -> {os.path.basename(woff2_path)}")
 
 
@@ -594,6 +645,7 @@ def main():
     family = DEFAULT_FAMILY
     outline_fix = True
     with_kobofix = False
+    full_web_fonts = "--full-web-fonts" in sys.argv
 
     if "--name" in sys.argv:
         idx = sys.argv.index("--name")
@@ -618,6 +670,7 @@ def main():
     print(f"  Family: {family}")
     print(f"  Outline fix: {'yes' if outline_fix else 'no'}")
     print(f"  Kobo fix: {'yes' if with_kobofix else 'no'}")
+    print(f"  Web coverage: {'full' if full_web_fonts else 'common Latin'}")
     print(f"  Sources: {len(SOURCE_STYLES)}")
 
     tmp_dir = os.path.join(ROOT_DIR, "tmp")
@@ -626,12 +679,24 @@ def main():
     os.makedirs(tmp_dir)
 
     try:
-        build(tmp_dir, family=family, outline_fix=outline_fix, with_kobofix=with_kobofix)
+        build(
+            tmp_dir,
+            family=family,
+            outline_fix=outline_fix,
+            with_kobofix=with_kobofix,
+            full_web_fonts=full_web_fonts,
+        )
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-def build(tmp_dir, family=DEFAULT_FAMILY, outline_fix=True, with_kobofix=False):
+def build(
+    tmp_dir,
+    family=DEFAULT_FAMILY,
+    outline_fix=True,
+    with_kobofix=False,
+    full_web_fonts=False,
+):
     variants = [
         (f"{family}-{style}", style, source_path, method)
         for style, source_path, method in SOURCE_STYLES
@@ -706,7 +771,7 @@ def build(tmp_dir, family=DEFAULT_FAMILY, outline_fix=True, with_kobofix=False):
     for name in variant_names:
         ttf_path = os.path.join(OUT_TTF_DIR, f"{name}.ttf")
         woff2_path = os.path.join(OUT_WEB_DIR, f"{name}.woff2")
-        convert_to_woff2(ttf_path, woff2_path)
+        convert_to_woff2(ttf_path, woff2_path, subset_web=not full_web_fonts)
 
     print("\n" + "=" * 60)
     print("  Build complete!")

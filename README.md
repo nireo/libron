@@ -33,13 +33,27 @@ The following variants are generated:
 
 - Libron for desktop (`TTF`)
 - Libron for [Kobo devices](https://github.com/nicoverbruggen/kobo-font-fix) (`KF TTF`)
-- Libron's webfont variant (`WOFF2`) 
+- Libron's webfont variant (`WOFF2`, subset for common Latin text)
 
 Libron for devices running CrossPoint Reader (`cpfont`) is built and published in [ebook-fonts](https://github.com/nicoverbruggen/ebook-fonts).
 
 ### Building locally
 
 You can run `./local-build.sh` if you have Podman installed to build the definitive fonts. If you have all dependencies installed locally, you can also use `./build.py` to build the font with Python.
+
+### Webfonts
+
+The default build writes smaller WOFF2 files to `out/web/`. These retain printable ASCII, Latin-1 accented letters (including `Å Ä Ö å ä ö`), `Š š Ž ž`, `Œ œ Ÿ`, combining accents, common punctuation, the euro sign, and basic math symbols. Kerning, ligatures, small caps, number features, and hinting are preserved. The desktop and Kobo fonts retain their full character coverage.
+
+The webfonts omit extended Latin letters outside this set, including Vietnamese forms, and specialized symbols. Characters outside the subset use the website's fallback font. The exact retained ranges are defined in `WEB_UNICODE_RANGES` in `build.py`.
+
+For a website that needs the complete character set, build with:
+
+```sh
+./local-build.sh --full-web-fonts
+```
+
+This option also works when passing `--full-web-fonts` directly to `build.py` in the build container.
 
 ## License
 
